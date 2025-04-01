@@ -39422,7 +39422,7 @@ async function run() {
         const owner = core.getInput('owner');
         const sha = core.getInput('sha');
         const bitriseCheckName = core.getInput('bitrise_check_name');
-        const bitriseCheckPeriod = parseInt(core.getInput('bitrise_check_period'), 10) * 100;
+        const bitriseCheckPeriod = parseInt(core.getInput('bitrise_check_period'), 10) * 1000;
         const octokit = github.getOctokit(githubToken);
         core.info(`Checking check runs for commit: ${sha}`);
         // Retrieve the external_id of the Bitrise check run
@@ -39459,6 +39459,7 @@ async function run() {
             core.info(`Current Bitrise status: ${buildStatus} (${statusText})`);
             if (buildStatus === 0) {
                 core.info('Build is still in progress. Waiting...');
+                console.info(`Waiting for ${bitriseCheckPeriod} milliseconds before checking again...`);
                 await new Promise((resolve) => setTimeout(resolve, bitriseCheckPeriod));
             }
         } while (buildStatus === 0);
