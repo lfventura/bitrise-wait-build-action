@@ -10,7 +10,7 @@ export async function run(): Promise<void> {
     const owner: string = core.getInput('owner');
     const sha: string = core.getInput('sha');
     const bitriseCheckName: string = core.getInput('bitrise_check_name');
-    const bitriseCheckPeriod: number = parseInt(core.getInput('bitrise_check_period'), 10) * 100;
+    const bitriseCheckPeriod: number = parseInt(core.getInput('bitrise_check_period'), 10) * 1000;
 
     const octokit = github.getOctokit(githubToken);
 
@@ -62,7 +62,9 @@ export async function run(): Promise<void> {
 
       if (buildStatus === 0) {
         core.info('Build is still in progress. Waiting...');
+        console.info(`Waiting for ${bitriseCheckPeriod} milliseconds before checking again...`);
         await new Promise((resolve) => setTimeout(resolve, bitriseCheckPeriod));
+
       }
     } while (buildStatus === 0);
 

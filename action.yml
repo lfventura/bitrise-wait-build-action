@@ -25,7 +25,7 @@ inputs:
     description: 'The name of the Bitrise check run to monitor.'
     required: false
     default: 'Bitrise'
-  bitriseCheckPeriod:
+  bitrise_check_period:
     description: 'The time in seconds to wait between checks for the Bitrise build status.'
     required: false
     default: '60'
