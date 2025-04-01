@@ -29,6 +29,9 @@ inputs:
     description: 'The time in seconds to wait between checks for the Bitrise build status.'
     required: false
     default: '60'
+outputs:
+  bitrise_build_status:
+    description: 'The status of the Bitrise build.'
 runs:
   using: 'node20'
   main: 'dist/run.js'
