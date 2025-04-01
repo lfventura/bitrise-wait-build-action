@@ -1,0 +1,37 @@
+name: 'Wait for Bitrise Build'
+description: 'Waits for a Bitrise build to complete and checks its status.'
+author: 'Lucas Ventura'
+inputs:
+  github_token:
+    description: 'GitHub token to authenticate with the GitHub API.'
+    required: false
+    default: ${{ github.token }}
+  bitrise_token:
+    description: 'Bitrise token to authenticate with the Bitrise API.'
+    required: true
+  repo:
+    description: 'The repository name where the check run is located.'
+    required: false
+    default: '${{ github.event.repository.name }}'
+  owner:
+    description: 'The owner of the repository.'
+    required: false
+    default: '${{ github.repository_owner }}'
+  sha:
+    description: 'The commit SHA to check the status of the Bitrise build.'
+    required: false
+    default: '${{ github.event.pull_request.head.sha }}'
+  bitrise_check_name:
+    description: 'The name of the Bitrise check run to monitor.'
+    required: false
+    default: 'Bitrise'
+  bitriseCheckPeriod:
+    description: 'The time in seconds to wait between checks for the Bitrise build status.'
+    required: false
+    default: '60'
+runs:
+  using: 'node20'
+  main: 'dist/run.js'
+branding:
+  icon: 'check-circle'
+  color: 'blue'
