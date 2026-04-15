@@ -33,7 +33,7 @@ outputs:
   bitrise_build_status:
     description: 'The status of the Bitrise build.'
 runs:
-  using: 'node20'
+  using: 'node24'
   main: 'dist/index.js'
 branding:
   icon: 'check-circle'
