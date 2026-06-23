@@ -1,15 +1,13 @@
 import * as core from '@actions/core';
 import * as github from '@actions/github';
-import fetch from 'node-fetch';
 import { run } from './run';
 
 jest.mock('@actions/core');
 jest.mock('@actions/github');
-jest.mock('node-fetch', () => jest.fn());
 
 const mockedCore = core as jest.Mocked<typeof core>;
 const mockedGithub = github as jest.Mocked<typeof github>;
-const mockedFetch = fetch as jest.MockedFunction<typeof fetch>;
+const mockedFetch = jest.fn() as jest.MockedFunction<typeof global.fetch>;
 
 describe('run', () => {
     const mockInputs = {
@@ -23,6 +21,7 @@ describe('run', () => {
 
     beforeEach(() => {
         jest.clearAllMocks();
+        global.fetch = mockedFetch;
 
         mockedCore.getInput.mockImplementation((name: string) => mockInputs[name as keyof typeof mockInputs]);
 
