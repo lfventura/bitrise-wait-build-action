@@ -19,8 +19,7 @@
   "license": "MIT",
   "dependencies": {
     "@actions/core": "^1.11.1",
-    "@actions/github": "^6.0.0",
-    "node-fetch": "^3.3.1"
+    "@actions/github": "^6.0.0"
   },
   "devDependencies": {
     "@github/local-action": "github:github/local-action",
