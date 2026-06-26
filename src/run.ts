@@ -1,6 +1,11 @@
 import * as core from '@actions/core';
 import * as github from '@actions/github';
 
+type CheckRun = {
+  name?: string | null;
+  external_id?: string | null;
+};
+
 export async function run(): Promise<void> {
   try {
     const githubToken: string = core.getInput('github_token');
@@ -15,14 +20,20 @@ export async function run(): Promise<void> {
 
     core.info(`Checking check runs for commit: ${sha}`);
 
-    // Retrieve the external_id of the Bitrise check run
-    const { data } = await octokit.rest.checks.listForRef({
-      owner,
-      repo,
-      ref: sha,
-    });
+    // Retrieve all check runs for the SHA, not just the first page.
+    const checkRuns = await octokit.paginate(
+      octokit.rest.checks.listForRef,
+      {
+        owner,
+        repo,
+        ref: sha,
+        per_page: 100,
+      },
+      (response: { data: { check_runs: CheckRun[] } }) => response.data.check_runs,
+    ) as CheckRun[];
 
-    const bitriseCheckRun = data.check_runs.find((check) => check.name === bitriseCheckName);
+    // Retrieve the external_id of the Bitrise check run.
+    const bitriseCheckRun = checkRuns.find((check: CheckRun) => check.name === bitriseCheckName);
 
     if (!bitriseCheckRun) {
       throw new Error(`Check run with name "${bitriseCheckName}" not found.`);

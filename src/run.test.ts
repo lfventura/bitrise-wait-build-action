@@ -8,6 +8,8 @@ jest.mock('@actions/github');
 const mockedCore = core as jest.Mocked<typeof core>;
 const mockedGithub = github as jest.Mocked<typeof github>;
 const mockedFetch = jest.fn() as jest.MockedFunction<typeof global.fetch>;
+const mockedPaginate = jest.fn();
+const mockedListForRef = jest.fn();
 
 describe('run', () => {
     const mockInputs = {
@@ -26,21 +28,20 @@ describe('run', () => {
         mockedCore.getInput.mockImplementation((name: string) => mockInputs[name as keyof typeof mockInputs]);
 
         mockedGithub.getOctokit.mockReturnValue({
+            paginate: mockedPaginate,
             rest: {
                 checks: {
-                    listForRef: jest.fn().mockResolvedValue({
-                        data: {
-                            check_runs: [
-                                {
-                                    name: mockInputs.bitrise_check_name,
-                                    external_id: 'mock-external-id',
-                                },
-                            ],
-                        },
-                    }),
+                    listForRef: mockedListForRef,
                 },
             },
         } as any);
+
+        mockedPaginate.mockResolvedValue([
+            {
+                name: mockInputs.bitrise_check_name,
+                external_id: 'mock-external-id',
+            },
+        ]);
     });
 
     it('should complete successfully when the Bitrise build succeeds', async () => {
@@ -56,22 +57,22 @@ describe('run', () => {
 
         await run();
 
+        expect(mockedPaginate).toHaveBeenCalledWith(
+            expect.any(Function),
+            expect.objectContaining({
+                owner: mockInputs.owner,
+                repo: mockInputs.repo,
+                ref: mockInputs.sha,
+                per_page: 100,
+            }),
+            expect.any(Function),
+        );
         expect(mockedCore.setOutput).toHaveBeenCalledWith('bitrise_build_status', 'success');
         expect(mockedCore.info).toHaveBeenCalledWith('Bitrise build completed successfully!');
     });
 
     it('should fail if the Bitrise check run is not found', async () => {
-        mockedGithub.getOctokit.mockReturnValueOnce({
-            rest: {
-                checks: {
-                    listForRef: jest.fn().mockResolvedValue({
-                        data: {
-                            check_runs: [],
-                        },
-                    }),
-                },
-            },
-        } as any);
+        mockedPaginate.mockResolvedValueOnce([]);
 
         await run();
 
@@ -79,22 +80,12 @@ describe('run', () => {
     });
 
     it('should fail if the Bitrise check run does not have an external_id', async () => {
-        mockedGithub.getOctokit.mockReturnValueOnce({
-            rest: {
-                checks: {
-                    listForRef: jest.fn().mockResolvedValue({
-                        data: {
-                            check_runs: [
-                                {
-                                    name: mockInputs.bitrise_check_name,
-                                    external_id: null,
-                                },
-                            ],
-                        },
-                    }),
-                },
+        mockedPaginate.mockResolvedValueOnce([
+            {
+                name: mockInputs.bitrise_check_name,
+                external_id: null,
             },
-        } as any);
+        ]);
 
         await run();
 
