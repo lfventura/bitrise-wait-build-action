@@ -16,83 +16,64 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout main
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
+          token: ${{ secrets.RELEASE_TOKEN }}
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '24'
           cache: npm
 
-      - name: Install dependencies
-        run: npm ci
+      - run: npm ci
 
-      - name: Run tests
-        run: npm test
+      - run: npm test
 
       - name: Compute release version
         id: version
         shell: bash
         run: |
           set -euo pipefail
-
-          CURRENT_TAG="$(git tag --list 'v*' --sort=-v:refname | head -n 1)"
-          if [[ -z "$CURRENT_TAG" ]]; then
-            CURRENT_TAG="v0.0.0"
-          fi
-
+          CURRENT_TAG="$(git tag --list 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1)"
+          [[ -z "$CURRENT_TAG" ]] && CURRENT_TAG="v0.0.0"
           VERSION="${CURRENT_TAG#v}"
           IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
-
           case "${{ inputs.bump_type }}" in
-            major)
-              ((MAJOR += 1))
-              MINOR=0
-              PATCH=0
-              ;;
-            minor)
-              ((MINOR += 1))
-              PATCH=0
-              ;;
-            patch)
-              ((PATCH += 1))
-              ;;
-            *)
-              echo "Unsupported bump type: ${{ inputs.bump_type }}" >&2
-              exit 1
-              ;;
+            major) ((MAJOR+=1)); MINOR=0; PATCH=0 ;;
+            minor) ((MINOR+=1)); PATCH=0 ;;
+            patch) ((PATCH+=1)) ;;
+            *) echo "Unknown bump type" >&2; exit 1 ;;
           esac
-
           NEW_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
-          PACKAGE_VERSION="${NEW_VERSION#v}"
-
-          echo "current_tag=$CURRENT_TAG" >> "$GITHUB_OUTPUT"
-          echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
-          echo "package_version=$PACKAGE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "new_version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "package_version=${NEW_VERSION#v}" >> "$GITHUB_OUTPUT"
 
       - name: Build distribution
         run: npm run build
 
-      - name: Update package version
+      - name: Update package.json version
         env:
           PACKAGE_VERSION: ${{ steps.version.outputs.package_version }}
         run: |
-          node <<'EOF'
-          const fs = require('fs');
-          const packagePath = 'package.json';
-          const packageJson = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
-          packageJson.version = process.env.PACKAGE_VERSION;
-          fs.writeFileSync(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`);
-          EOF
+          node -e "
+          const fs=require('fs');
+          const p=JSON.parse(fs.readFileSync('package.json','utf8'));
+          p.version=process.env.PACKAGE_VERSION;
+          fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');
+          "
+
+      - name: Sync package-lock.json version
+        run: npm install --package-lock-only --ignore-scripts
 
       - name: Configure git
         run: |
@@ -103,24 +84,21 @@ jobs:
         env:
           NEW_VERSION: ${{ steps.version.outputs.new_version }}
         run: |
-          git add dist package.json
-          git commit -m "chore(release): ${NEW_VERSION}"
-
-      - name: Push release commit
-        run: git push origin HEAD:main
+          git add dist package.json package-lock.json
+          git diff --staged --quiet || git commit -m "chore(release): ${NEW_VERSION}"
 
       - name: Create git tag
         env:
           NEW_VERSION: ${{ steps.version.outputs.new_version }}
         run: git tag "${NEW_VERSION}"
 
-      - name: Push git tag
+      - name: Push commit and tag
         env:
           NEW_VERSION: ${{ steps.version.outputs.new_version }}
-        run: git push origin "${NEW_VERSION}"
+        run: git push origin HEAD:main "${NEW_VERSION}"
 
       - name: Create GitHub release
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           NEW_VERSION: ${{ steps.version.outputs.new_version }}
         run: gh release create "${NEW_VERSION}" --title "${NEW_VERSION}" --generate-notes
