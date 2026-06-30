@@ -58,7 +58,7 @@ describe('run', () => {
         await run();
 
         expect(mockedPaginate).toHaveBeenCalledWith(
-            expect.any(Function),
+            mockedListForRef,
             expect.objectContaining({
                 owner: mockInputs.owner,
                 repo: mockInputs.repo,
