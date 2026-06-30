@@ -35775,10 +35775,10 @@ async function run() {
         core.info(`Checking check runs for commit: ${sha}`);
         // Retrieve check runs for the SHA, paging until we find the Bitrise check run.
         const checkRuns = await octokit.paginate(octokit.rest.checks.listForRef, { owner, repo, ref: sha, per_page: 100 }, (response, done) => {
-            const found = response.data.find((check) => check.name === bitriseCheckName);
+            const found = response.data.check_runs.find((check) => check.name === bitriseCheckName);
             if (found)
                 done();
-            return response.data;
+            return response.data.check_runs;
         });
         const bitriseCheckRun = checkRuns.find((check) => check.name === bitriseCheckName);
         if (!bitriseCheckRun) {

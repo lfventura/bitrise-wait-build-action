@@ -25,13 +25,13 @@ export async function run(): Promise<void> {
       octokit.rest.checks.listForRef,
       { owner, repo, ref: sha, per_page: 100 },
       (response, done) => {
-        const found = response.data.find((check) => check.name === bitriseCheckName);
+        const found = response.data.check_runs.find((check: CheckRun) => check.name === bitriseCheckName);
         if (found) done();
-        return response.data;
+        return response.data.check_runs;
       },
     );
 
-    const bitriseCheckRun = (checkRuns as CheckRun[]).find((check) => check.name === bitriseCheckName);
+    const bitriseCheckRun = checkRuns.find((check) => check.name === bitriseCheckName);
 
     if (!bitriseCheckRun) {
       throw new Error(`Check run with name "${bitriseCheckName}" not found.`);
