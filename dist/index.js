@@ -35773,13 +35773,14 @@ async function run() {
         const bitriseCheckPeriod = parseInt(core.getInput('bitrise_check_period'), 10) * 1000;
         const octokit = github.getOctokit(githubToken);
         core.info(`Checking check runs for commit: ${sha}`);
-        // Retrieve the external_id of the Bitrise check run
-        const { data } = await octokit.rest.checks.listForRef({
-            owner,
-            repo,
-            ref: sha,
+        // Retrieve check runs for the SHA, paging until we find the Bitrise check run.
+        const checkRuns = await octokit.paginate(octokit.rest.checks.listForRef, { owner, repo, ref: sha, per_page: 100 }, (response, done) => {
+            const found = response.data.check_runs.find((check) => check.name === bitriseCheckName);
+            if (found)
+                done();
+            return response.data.check_runs;
         });
-        const bitriseCheckRun = data.check_runs.find((check) => check.name === bitriseCheckName);
+        const bitriseCheckRun = checkRuns.find((check) => check.name === bitriseCheckName);
         if (!bitriseCheckRun) {
             throw new Error(`Check run with name "${bitriseCheckName}" not found.`);
         }
