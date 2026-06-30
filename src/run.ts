@@ -20,20 +20,28 @@ export async function run(): Promise<void> {
 
     core.info(`Checking check runs for commit: ${sha}`);
 
-    // Retrieve all check runs for the SHA, not just the first page.
-    const checkRuns = await octokit.paginate(
-      octokit.rest.checks.listForRef,
-      {
+    // Retrieve check runs for the SHA, paging until we find the Bitrise check run.
+    let bitriseCheckRun: CheckRun | undefined;
+    let page = 1;
+
+    while (!bitriseCheckRun) {
+      const { data } = await octokit.rest.checks.listForRef({
         owner,
         repo,
         ref: sha,
         per_page: 100,
-      },
-      (response: { data: { check_runs: CheckRun[] } }) => response.data.check_runs,
-    ) as CheckRun[];
+        page,
+      });
 
-    // Retrieve the external_id of the Bitrise check run.
-    const bitriseCheckRun = checkRuns.find((check: CheckRun) => check.name === bitriseCheckName);
+      bitriseCheckRun = (data.check_runs as CheckRun[]).find((check) => check.name === bitriseCheckName);
+
+      // Stop when we reach the last page.
+      if (data.check_runs.length < 100) {
+        break;
+      }
+
+      page += 1;
+    }
 
     if (!bitriseCheckRun) {
       throw new Error(`Check run with name "${bitriseCheckName}" not found.`);
