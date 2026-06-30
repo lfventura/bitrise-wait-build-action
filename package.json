@@ -1,6 +1,6 @@
 {
   "name": "bitrise-wait-build-action",
-  "version": "1.0.0",
+  "version": "1.0.6",
   "description": "A GitHub Action to wait for a Bitrise build to finish",
   "main": "dist/index.ts",
   "scripts": {
