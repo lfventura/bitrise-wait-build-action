@@ -21,13 +21,16 @@ export async function run(): Promise<void> {
     core.info(`Checking check runs for commit: ${sha}`);
 
     // Retrieve check runs for the SHA, paging until we find the Bitrise check run.
+    // octokit.paginate normalizes the response before handing it to this callback, so
+    // `response.data` is already the `check_runs` array rather than the wrapper object.
     const checkRuns = await octokit.paginate(
       octokit.rest.checks.listForRef,
       { owner, repo, ref: sha, per_page: 100 },
       (response, done) => {
-        const found = response.data.check_runs.find((check: CheckRun) => check.name === bitriseCheckName);
+        const pageCheckRuns = response.data as CheckRun[];
+        const found = pageCheckRuns.find((check: CheckRun) => check.name === bitriseCheckName);
         if (found) done();
-        return response.data.check_runs;
+        return pageCheckRuns;
       },
     );
 
