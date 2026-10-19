@@ -11,6 +11,43 @@ const mockedFetch = jest.fn() as jest.MockedFunction<typeof global.fetch>;
 const mockedPaginate = jest.fn();
 const mockedListForRef = jest.fn();
 
+type MockCheckRun = { name?: string | null; external_id?: string | null };
+
+/**
+ * Drives the `mapFn` passed to `octokit.paginate` the same way the real
+ * `@octokit/plugin-paginate-rest` does: each page is handed over already
+ * normalized, meaning `response.data` is the `check_runs` array itself and not
+ * the `{ total_count, check_runs }` wrapper returned by the REST endpoint.
+ * `done()` stops paging, and the accumulated pages are concatenated.
+ */
+function paginateWithPages(pages: MockCheckRun[][]) {
+    return async (
+        _route: unknown,
+        _params: unknown,
+        mapFn?: (response: { data: MockCheckRun[] }, done: () => void) => MockCheckRun[],
+    ) => {
+        let results: MockCheckRun[] = [];
+
+        for (const page of pages) {
+            if (!mapFn) {
+                results = results.concat(page);
+                continue;
+            }
+
+            let earlyExit = false;
+            const done = () => {
+                earlyExit = true;
+            };
+
+            results = results.concat(mapFn({ data: page }, done));
+
+            if (earlyExit) break;
+        }
+
+        return results;
+    };
+}
+
 describe('run', () => {
     const mockInputs = {
         github_token: 'mock-github-token',
@@ -36,12 +73,16 @@ describe('run', () => {
             },
         } as any);
 
-        mockedPaginate.mockResolvedValue([
-            {
-                name: mockInputs.bitrise_check_name,
-                external_id: 'mock-external-id',
-            },
-        ]);
+        mockedPaginate.mockImplementation(
+            paginateWithPages([
+                [
+                    {
+                        name: mockInputs.bitrise_check_name,
+                        external_id: 'mock-external-id',
+                    },
+                ],
+            ]),
+        );
     });
 
     it('should complete successfully when the Bitrise build succeeds', async () => {
@@ -72,7 +113,7 @@ describe('run', () => {
     });
 
     it('should fail if the Bitrise check run is not found', async () => {
-        mockedPaginate.mockResolvedValueOnce([]);
+        mockedPaginate.mockImplementation(paginateWithPages([[]]));
 
         await run();
 
@@ -80,16 +121,123 @@ describe('run', () => {
     });
 
     it('should fail if the Bitrise check run does not have an external_id', async () => {
-        mockedPaginate.mockResolvedValueOnce([
-            {
-                name: mockInputs.bitrise_check_name,
-                external_id: null,
-            },
-        ]);
+        mockedPaginate.mockImplementation(
+            paginateWithPages([
+                [
+                    {
+                        name: mockInputs.bitrise_check_name,
+                        external_id: null,
+                    },
+                ],
+            ]),
+        );
 
         await run();
 
         expect(mockedCore.setFailed).toHaveBeenCalledWith('The check run "mock-bitrise-check-name" does not have an external_id.');
+    });
+
+    it('should read the normalized check run array from the paginate map callback', async () => {
+        // Regression guard for the crash observed in production: octokit.paginate
+        // hands the map callback an already-normalized response, so reading
+        // `response.data.check_runs` threw "Cannot read properties of undefined
+        // (reading 'find')" and the action never reached the Bitrise API.
+        mockedPaginate.mockImplementation(
+            paginateWithPages([
+                [
+                    { name: 'some-other-check', external_id: 'other-external-id' },
+                    { name: mockInputs.bitrise_check_name, external_id: 'mock-external-id' },
+                ],
+            ]),
+        );
+
+        mockedFetch.mockResolvedValueOnce({
+            ok: true,
+            json: jest.fn().mockResolvedValue({
+                data: {
+                    status: 1,
+                    status_text: 'success',
+                },
+            }),
+        } as any);
+
+        await run();
+
+        expect(mockedCore.setFailed).not.toHaveBeenCalled();
+        expect(mockedFetch).toHaveBeenCalledWith('https://api.bitrise.io/v0.1/mock-external-id', expect.anything());
+        expect(mockedCore.info).toHaveBeenCalledWith('External ID found: mock-external-id');
+        expect(mockedCore.setOutput).toHaveBeenCalledWith('bitrise_build_status', 'success');
+    });
+
+    it('should stop paginating as soon as the Bitrise check run is found', async () => {
+        const mapFnCalls: MockCheckRun[][] = [];
+
+        mockedPaginate.mockImplementation(
+            async (
+                _route: unknown,
+                _params: unknown,
+                mapFn: (response: { data: MockCheckRun[] }, done: () => void) => MockCheckRun[],
+            ) => {
+                const pages: MockCheckRun[][] = [
+                    [{ name: mockInputs.bitrise_check_name, external_id: 'mock-external-id' }],
+                    [{ name: 'never-reached', external_id: 'never-reached-external-id' }],
+                ];
+
+                let results: MockCheckRun[] = [];
+
+                for (const page of pages) {
+                    mapFnCalls.push(page);
+
+                    let earlyExit = false;
+                    results = results.concat(mapFn({ data: page }, () => {
+                        earlyExit = true;
+                    }));
+
+                    if (earlyExit) break;
+                }
+
+                return results;
+            },
+        );
+
+        mockedFetch.mockResolvedValueOnce({
+            ok: true,
+            json: jest.fn().mockResolvedValue({
+                data: {
+                    status: 1,
+                    status_text: 'success',
+                },
+            }),
+        } as any);
+
+        await run();
+
+        expect(mapFnCalls).toHaveLength(1);
+        expect(mockedCore.info).toHaveBeenCalledWith('External ID found: mock-external-id');
+    });
+
+    it('should keep paginating until the Bitrise check run shows up on a later page', async () => {
+        mockedPaginate.mockImplementation(
+            paginateWithPages([
+                [{ name: 'first-page-check', external_id: 'first-page-external-id' }],
+                [{ name: mockInputs.bitrise_check_name, external_id: 'mock-external-id' }],
+            ]),
+        );
+
+        mockedFetch.mockResolvedValueOnce({
+            ok: true,
+            json: jest.fn().mockResolvedValue({
+                data: {
+                    status: 1,
+                    status_text: 'success',
+                },
+            }),
+        } as any);
+
+        await run();
+
+        expect(mockedCore.info).toHaveBeenCalledWith('External ID found: mock-external-id');
+        expect(mockedCore.setOutput).toHaveBeenCalledWith('bitrise_build_status', 'success');
     });
 
     it('should fail if the Bitrise API returns an error', async () => {
