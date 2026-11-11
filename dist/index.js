@@ -35762,7 +35762,15 @@ var github = __nccwpck_require__(3228);
 ;// CONCATENATED MODULE: ./src/run.ts
 
 
-async function run() {
+const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+function getPositiveIntInput(name) {
+    const raw = core.getInput(name).trim();
+    if (!/^\d+$/.test(raw) || parseInt(raw, 10) <= 0) {
+        throw new Error(`Input "${name}" must be a positive integer number of seconds, got "${raw}".`);
+    }
+    return parseInt(raw, 10);
+}
+async function run(sleep = defaultSleep, now = Date.now) {
     try {
         const githubToken = core.getInput('github_token');
         const bitriseToken = core.getInput('bitrise_token');
@@ -35770,22 +35778,36 @@ async function run() {
         const owner = core.getInput('owner');
         const sha = core.getInput('sha');
         const bitriseCheckName = core.getInput('bitrise_check_name');
-        const bitriseCheckPeriod = parseInt(core.getInput('bitrise_check_period'), 10) * 1000;
+        const bitriseCheckPeriod = getPositiveIntInput('bitrise_check_period') * 1000;
+        const checkWaitTimeoutSeconds = getPositiveIntInput('bitrise_check_wait_timeout');
         const octokit = github.getOctokit(githubToken);
         core.info(`Checking check runs for commit: ${sha}`);
         // Retrieve check runs for the SHA, paging until we find the Bitrise check run.
         // octokit.paginate normalizes the response before handing it to this callback, so
         // `response.data` is already the `check_runs` array rather than the wrapper object.
-        const checkRuns = await octokit.paginate(octokit.rest.checks.listForRef, { owner, repo, ref: sha, per_page: 100 }, (response, done) => {
-            const pageCheckRuns = response.data;
-            const found = pageCheckRuns.find((check) => check.name === bitriseCheckName);
-            if (found)
-                done();
-            return pageCheckRuns;
-        });
-        const bitriseCheckRun = checkRuns.find((check) => check.name === bitriseCheckName);
+        const findBitriseCheckRun = async () => {
+            const checkRuns = await octokit.paginate(octokit.rest.checks.listForRef, { owner, repo, ref: sha, per_page: 100 }, (response, done) => {
+                const pageCheckRuns = response.data;
+                const found = pageCheckRuns.find((check) => check.name === bitriseCheckName);
+                if (found)
+                    done();
+                return pageCheckRuns;
+            });
+            return checkRuns.find((check) => check.name === bitriseCheckName);
+        };
+        // Bitrise may not have reported its check run yet when this action starts: retry until the deadline.
+        const startedAt = now();
+        const deadline = startedAt + checkWaitTimeoutSeconds * 1000;
+        let bitriseCheckRun = await findBitriseCheckRun();
+        while (!bitriseCheckRun && now() < deadline) {
+            const waitMs = Math.min(bitriseCheckPeriod, deadline - now());
+            const waitedSeconds = Math.round((now() - startedAt) / 1000);
+            core.info(`Check run "${bitriseCheckName}" not found yet on ${sha}; retrying in ${Math.ceil(waitMs / 1000)}s (waited ${waitedSeconds}s of ${checkWaitTimeoutSeconds}s)`);
+            await sleep(waitMs);
+            bitriseCheckRun = await findBitriseCheckRun();
+        }
         if (!bitriseCheckRun) {
-            throw new Error(`Check run with name "${bitriseCheckName}" not found.`);
+            throw new Error(`Check run with name "${bitriseCheckName}" not found after waiting ${checkWaitTimeoutSeconds}s.`);
         }
         const externalId = bitriseCheckRun.external_id;
         if (!externalId) {

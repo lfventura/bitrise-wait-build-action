@@ -56,11 +56,21 @@ describe('run', () => {
         owner: 'mock-owner',
         sha: 'mock-sha',
         bitrise_check_name: 'mock-bitrise-check-name',
+        bitrise_check_period: '60',
+        bitrise_check_wait_timeout: '600',
     };
+
+    // Fake clock for the check-run wait loop: sleeping advances `now` instantly.
+    let fakeNow: number;
+    const now = () => fakeNow;
+    const sleep = jest.fn(async (ms: number) => {
+        fakeNow += ms;
+    });
 
     beforeEach(() => {
         jest.clearAllMocks();
         global.fetch = mockedFetch;
+        fakeNow = 0;
 
         mockedCore.getInput.mockImplementation((name: string) => mockInputs[name as keyof typeof mockInputs]);
 
@@ -112,12 +122,84 @@ describe('run', () => {
         expect(mockedCore.info).toHaveBeenCalledWith('Bitrise build completed successfully!');
     });
 
-    it('should fail if the Bitrise check run is not found', async () => {
+    it('should not wait when the Bitrise check run is found on the first query', async () => {
+        mockedFetch.mockResolvedValueOnce({
+            ok: true,
+            json: jest.fn().mockResolvedValue({ data: { status: 1, status_text: 'success' } }),
+        } as any);
+
+        await run(sleep, now);
+
+        expect(mockedPaginate).toHaveBeenCalledTimes(1);
+        expect(sleep).not.toHaveBeenCalled();
+        expect(mockedCore.setFailed).not.toHaveBeenCalled();
+        expect(mockedCore.setOutput).toHaveBeenCalledWith('bitrise_build_status', 'success');
+    });
+
+    it('should retry when the Bitrise check run is not found yet and proceed once it appears', async () => {
+        mockedPaginate.mockImplementationOnce(paginateWithPages([[{ name: 'some-other-check' }]]));
+
+        mockedFetch.mockResolvedValueOnce({
+            ok: true,
+            json: jest.fn().mockResolvedValue({ data: { status: 1, status_text: 'success' } }),
+        } as any);
+
+        await run(sleep, now);
+
+        expect(mockedPaginate).toHaveBeenCalledTimes(2);
+        expect(sleep).toHaveBeenCalledTimes(1);
+        expect(sleep).toHaveBeenCalledWith(60000);
+        expect(mockedCore.info).toHaveBeenCalledWith(
+            'Check run "mock-bitrise-check-name" not found yet on mock-sha; retrying in 60s (waited 0s of 600s)',
+        );
+        expect(mockedFetch).toHaveBeenCalledWith('https://api.bitrise.io/v0.1/mock-external-id', expect.anything());
+        expect(mockedCore.setFailed).not.toHaveBeenCalled();
+        expect(mockedCore.setOutput).toHaveBeenCalledWith('bitrise_build_status', 'success');
+    });
+
+    it('should fail after the wait timeout if the Bitrise check run never appears', async () => {
+        mockedCore.getInput.mockImplementation((name: string) => {
+            if (name === 'bitrise_check_wait_timeout') return '150';
+            return mockInputs[name as keyof typeof mockInputs];
+        });
         mockedPaginate.mockImplementation(paginateWithPages([[]]));
 
-        await run();
+        await run(sleep, now);
 
-        expect(mockedCore.setFailed).toHaveBeenCalledWith('Check run with name "mock-bitrise-check-name" not found.');
+        // 60s + 60s + 30s (the last sleep never goes past the deadline), one query per wake-up.
+        expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([60000, 60000, 30000]);
+        expect(mockedPaginate).toHaveBeenCalledTimes(4);
+        expect(mockedFetch).not.toHaveBeenCalled();
+        expect(mockedCore.setFailed).toHaveBeenCalledWith(
+            'Check run with name "mock-bitrise-check-name" not found after waiting 150s.',
+        );
+    });
+
+    it.each(['0', '-5', 'abc', '1.5', ''])('should fail with a clear message for an invalid wait timeout "%s"', async (value) => {
+        mockedCore.getInput.mockImplementation((name: string) => {
+            if (name === 'bitrise_check_wait_timeout') return value;
+            return mockInputs[name as keyof typeof mockInputs];
+        });
+
+        await run(sleep, now);
+
+        expect(mockedCore.setFailed).toHaveBeenCalledWith(
+            `Input "bitrise_check_wait_timeout" must be a positive integer number of seconds, got "${value}".`,
+        );
+        expect(mockedPaginate).not.toHaveBeenCalled();
+    });
+
+    it('should fail with a clear message for an invalid check period', async () => {
+        mockedCore.getInput.mockImplementation((name: string) => {
+            if (name === 'bitrise_check_period') return 'soon';
+            return mockInputs[name as keyof typeof mockInputs];
+        });
+
+        await run(sleep, now);
+
+        expect(mockedCore.setFailed).toHaveBeenCalledWith(
+            'Input "bitrise_check_period" must be a positive integer number of seconds, got "soon".',
+        );
     });
 
     it('should fail if the Bitrise check run does not have an external_id', async () => {

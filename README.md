@@ -46,6 +46,7 @@ jobs:
 | `sha`                  | Yes      | Commit SHA to check the build status.                                    | `${{ github.event.pull_request.head.sha }}` |
 | `bitrise_check_name`   | Yes      | Name of the check run associated with Bitrise.                           | `Bitrise`  |
 | `bitrise_check_period` | Yes      | Time interval (in seconds) between build status | `60`
+| `bitrise_check_wait_timeout` | No | Maximum time (in seconds) to wait for the Bitrise check run to appear on the commit before failing. While waiting, the check runs are re-queried every `bitrise_check_period` seconds. | `600` |
 
 ## 🛠️ Development
 
@@ -63,6 +64,7 @@ This GitHub Action interacts with the Bitrise API and GitHub's Checks API to mon
 
 2. **Retrieve Check Run**:
    - The action uses the GitHub API to find the check run associated with the specified `bitrise_check_name` for the given commit (`sha`).
+   - If Bitrise has not reported its check run yet, the action retries every `bitrise_check_period` seconds for up to `bitrise_check_wait_timeout` seconds (default: 600) before failing.
 
 3. **Fetch External ID**:
    - Once the check run is found, the action retrieves the `external_id` associated with the Bitrise build.
