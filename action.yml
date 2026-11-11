@@ -32,7 +32,7 @@ inputs:
   bitrise_check_wait_timeout:
     description: 'Maximum time in seconds to wait for the Bitrise check run to appear on the commit before failing.'
     required: false
-    default: '600'
+    default: '120'
 outputs:
   bitrise_build_status:
     description: 'The status of the Bitrise build.'
