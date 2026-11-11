@@ -6,7 +6,17 @@ type CheckRun = {
   external_id?: string | null;
 };
 
-export async function run(): Promise<void> {
+const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+function getPositiveIntInput(name: string): number {
+  const raw = core.getInput(name).trim();
+  if (!/^\d+$/.test(raw) || parseInt(raw, 10) <= 0) {
+    throw new Error(`Input "${name}" must be a positive integer number of seconds, got "${raw}".`);
+  }
+  return parseInt(raw, 10);
+}
+
+export async function run(sleep: (ms: number) => Promise<void> = defaultSleep, now: () => number = Date.now): Promise<void> {
   try {
     const githubToken: string = core.getInput('github_token');
     const bitriseToken: string = core.getInput('bitrise_token');
@@ -14,7 +24,8 @@ export async function run(): Promise<void> {
     const owner: string = core.getInput('owner');
     const sha: string = core.getInput('sha');
     const bitriseCheckName: string = core.getInput('bitrise_check_name');
-    const bitriseCheckPeriod: number = parseInt(core.getInput('bitrise_check_period'), 10) * 1000;
+    const bitriseCheckPeriod: number = getPositiveIntInput('bitrise_check_period') * 1000;
+    const checkWaitTimeoutSeconds: number = getPositiveIntInput('bitrise_check_wait_timeout');
 
     const octokit = github.getOctokit(githubToken);
 
@@ -23,21 +34,37 @@ export async function run(): Promise<void> {
     // Retrieve check runs for the SHA, paging until we find the Bitrise check run.
     // octokit.paginate normalizes the response before handing it to this callback, so
     // `response.data` is already the `check_runs` array rather than the wrapper object.
-    const checkRuns = await octokit.paginate(
-      octokit.rest.checks.listForRef,
-      { owner, repo, ref: sha, per_page: 100 },
-      (response, done) => {
-        const pageCheckRuns = response.data as CheckRun[];
-        const found = pageCheckRuns.find((check: CheckRun) => check.name === bitriseCheckName);
-        if (found) done();
-        return pageCheckRuns;
-      },
-    );
+    const findBitriseCheckRun = async (): Promise<CheckRun | undefined> => {
+      const checkRuns = await octokit.paginate(
+        octokit.rest.checks.listForRef,
+        { owner, repo, ref: sha, per_page: 100 },
+        (response, done) => {
+          const pageCheckRuns = response.data as CheckRun[];
+          const found = pageCheckRuns.find((check: CheckRun) => check.name === bitriseCheckName);
+          if (found) done();
+          return pageCheckRuns;
+        },
+      );
+      return checkRuns.find((check) => check.name === bitriseCheckName);
+    };
 
-    const bitriseCheckRun = checkRuns.find((check) => check.name === bitriseCheckName);
+    // Bitrise may not have reported its check run yet when this action starts: retry until the deadline.
+    const startedAt = now();
+    const deadline = startedAt + checkWaitTimeoutSeconds * 1000;
+    let bitriseCheckRun = await findBitriseCheckRun();
+
+    while (!bitriseCheckRun && now() < deadline) {
+      const waitMs = Math.min(bitriseCheckPeriod, deadline - now());
+      const waitedSeconds = Math.round((now() - startedAt) / 1000);
+      core.info(
+        `Check run "${bitriseCheckName}" not found yet on ${sha}; retrying in ${Math.ceil(waitMs / 1000)}s (waited ${waitedSeconds}s of ${checkWaitTimeoutSeconds}s)`,
+      );
+      await sleep(waitMs);
+      bitriseCheckRun = await findBitriseCheckRun();
+    }
 
     if (!bitriseCheckRun) {
-      throw new Error(`Check run with name "${bitriseCheckName}" not found.`);
+      throw new Error(`Check run with name "${bitriseCheckName}" not found after waiting ${checkWaitTimeoutSeconds}s.`);
     }
 
     const externalId = bitriseCheckRun.external_id;
